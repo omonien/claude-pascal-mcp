@@ -30,6 +30,13 @@ from pascal_mcp.form_parser import (
 )
 from pascal_mcp.installer import download_and_install_fpc
 from pascal_mcp.screenshot import capture_window, list_windows
+from pascal_mcp.ide_observer import (
+    capture_ide_screenshot,
+    find_ide_window,
+    find_project_files,
+    read_source_context,
+    resolve_error_file,
+)
 
 mcp = FastMCP(
     "pascal-dev",
@@ -436,6 +443,173 @@ async def setup_fpc(
         parts.append(f"Version: {result['version']}")
     if "path" in result:
         parts.append(f"Path: {result['path']}")
+
+    return "\n".join(parts)
+
+
+@mcp.tool()
+async def observe_ide(
+    project_dir: str | None = None,
+) -> list:
+    """Observe the Delphi/Lazarus IDE and return a screenshot plus project info.
+
+    Finds a running RAD Studio, Delphi, or Lazarus IDE window, captures
+    a screenshot of it, and optionally scans the project directory for
+    source files. Claude reads the screenshot to spot compiler errors,
+    warnings, or other messages in the IDE's Messages pane.
+
+    Args:
+        project_dir: Optional path to the project directory on disk.
+            If provided, also returns a list of project source files.
+    """
+    ide = find_ide_window()
+    if ide is None:
+        return "No Delphi/Lazarus IDE window found. Is RAD Studio running?"
+
+    img = capture_ide_screenshot(ide["hwnd"])
+    if img is None:
+        return f"Found IDE window '{ide['title']}' but failed to capture screenshot."
+
+    import io
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG", optimize=True)
+    png_data = buffer.getvalue()
+
+    result = [
+        Image(data=png_data, format="png"),
+        f"IDE: {ide['title']}",
+    ]
+
+    if ide["project_name"]:
+        result.append(f"Project: {ide['project_name']}")
+
+    if project_dir:
+        files = find_project_files(project_dir)
+        if "error" in files:
+            result.append(f"Project scan: {files['error']}")
+        else:
+            summary = []
+            for key in ["pas_files", "dfm_files", "fmx_files", "dpr_files", "dproj_files"]:
+                count = len(files.get(key, []))
+                if count:
+                    summary.append(f"{count} {key.replace('_files', '').upper()}")
+            if summary:
+                result.append(f"Project files: {', '.join(summary)}")
+            if files.get("units_from_dproj"):
+                result.append(f"Units in .dproj: {', '.join(files['units_from_dproj'])}")
+
+    return result
+
+
+@mcp.tool()
+async def read_ide_errors(
+    project_dir: str,
+    errors: str,
+) -> str:
+    """Read source code context around compiler error locations.
+
+    After spotting errors in an IDE screenshot, call this tool with the
+    parsed error locations to get the source code around each error.
+
+    Args:
+        project_dir: Path to the project directory on disk.
+        errors: JSON array of error locations. Each entry is an object
+            with 'file' and 'line' keys, e.g.:
+            [{"file": "Unit1.pas", "line": 42},
+             {"file": "MainForm.pas", "line": 15}]
+    """
+    import json
+
+    try:
+        error_list = json.loads(errors) if errors else []
+    except json.JSONDecodeError as e:
+        return f"Invalid errors JSON: {e}"
+
+    if not error_list:
+        return "No errors provided."
+
+    # Get search paths from project
+    project_info = find_project_files(project_dir)
+    search_paths = project_info.get("search_paths", [])
+
+    parts = []
+    for err in error_list:
+        filename = err.get("file", "")
+        line = err.get("line", 0)
+
+        if not filename:
+            parts.append("Skipped entry with no filename.")
+            continue
+
+        resolved = resolve_error_file(filename, project_dir, search_paths)
+        if resolved is None:
+            parts.append(f"Could not find file: {filename}")
+            continue
+
+        context = read_source_context(resolved, line)
+        parts.append(context)
+
+    return "\n\n".join(parts)
+
+
+@mcp.tool()
+async def list_project_files(
+    project_dir: str,
+) -> str:
+    """List all source files in a Delphi/Lazarus project directory.
+
+    Scans the directory for Pascal source files (.pas, .dpr, .lpr),
+    form files (.dfm, .fmx, .lfm), and project files (.dproj, .lpi).
+    Also parses .dproj files for unit references, search paths, and
+    build configuration.
+
+    Args:
+        project_dir: Path to the project directory on disk.
+    """
+    files = find_project_files(project_dir)
+
+    if "error" in files:
+        return files["error"]
+
+    parts = [f"Project directory: {files['project_dir']}\n"]
+
+    categories = [
+        ("DPR (Delphi project)", "dpr_files"),
+        ("DPROJ (MSBuild project)", "dproj_files"),
+        ("LPR (Lazarus project)", "lpr_files"),
+        ("LPI (Lazarus project info)", "lpi_files"),
+        ("PAS (Pascal units)", "pas_files"),
+        ("DFM (VCL forms)", "dfm_files"),
+        ("FMX (FireMonkey forms)", "fmx_files"),
+        ("LFM (Lazarus forms)", "lfm_files"),
+    ]
+
+    for label, key in categories:
+        file_list = files.get(key, [])
+        if file_list:
+            parts.append(f"{label}: {len(file_list)}")
+            for f in file_list:
+                parts.append(f"  - {f}")
+            parts.append("")
+
+    if files.get("units_from_dproj"):
+        parts.append(f"Units referenced in .dproj:")
+        for u in files["units_from_dproj"]:
+            parts.append(f"  - {u}")
+        parts.append("")
+
+    if files.get("search_paths"):
+        parts.append(f"Search paths:")
+        for sp in files["search_paths"]:
+            parts.append(f"  - {sp}")
+        parts.append("")
+
+    if files.get("build_config"):
+        parts.append(f"Active build config: {files['build_config']}")
+
+    total = sum(len(files.get(k, [])) for _, k in categories)
+    if total == 0:
+        parts.append("No Pascal source files found in this directory.")
 
     return "\n".join(parts)
 
