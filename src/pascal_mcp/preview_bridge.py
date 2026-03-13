@@ -1309,18 +1309,25 @@ PAGE_HTML = """\
          background: #1e1e2e; color: #cdd6f4; display: flex; flex-direction: column;
          height: 100vh; overflow: hidden; }
   #toolbar {
-    display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: nowrap;
     padding: 6px 10px; background: #313244; border-bottom: 1px solid #45475a;
   }
   #toolbar label { font-size: 12px; color: #a6adc8; }
-  #toolbar select, #toolbar input, #toolbar button {
+  #toolbar select { font-size: 12px; padding: 3px 6px; border-radius: 4px;
+    border: 1px solid #585b70; background: #1e1e2e; color: #cdd6f4;
+    flex: 1; min-width: 80px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+  #toolbar input { font-size: 12px; padding: 3px 6px; border-radius: 4px;
+    border: 1px solid #585b70; background: #1e1e2e; color: #cdd6f4;
+    flex: 1; min-width: 60px; max-width: 160px; }
+  #toolbar button {
     font-size: 12px; padding: 3px 6px; border-radius: 4px; border: 1px solid #585b70;
-    background: #1e1e2e; color: #cdd6f4;
+    background: #1e1e2e; color: #cdd6f4; white-space: nowrap; flex-shrink: 0;
   }
   #toolbar button { cursor: pointer; background: #89b4fa; color: #1e1e2e;
                      border-color: #89b4fa; font-weight: 600; }
   #toolbar button:hover { background: #74c7ec; }
-  #status { margin-left: auto; font-size: 11px; color: #a6adc8; }
+  #status { margin-left: auto; font-size: 11px; color: #a6adc8;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
   #main { display: flex; flex: 1; overflow: hidden; }
 

@@ -164,7 +164,79 @@ def _capture_with_printwindow(hwnd: int) -> Image.Image | None:
                 # Convert BGRA to RGBA
                 img = Image.frombuffer("RGBA", (width, height), buf, "raw", "BGRA", 0, 1)
                 # Convert to RGB (drop alpha)
-                return img.convert("RGB")
+                img = img.convert("RGB")
+
+                # Crop out DWM invisible borders (the black areas)
+                try:
+                    extended = ctypes.wintypes.RECT()
+                    DWMWA_EXTENDED_FRAME_BOUNDS = 9
+                    dwmapi = ctypes.windll.dwmapi
+                    hr = dwmapi.DwmGetWindowAttribute(
+                        hwnd, DWMWA_EXTENDED_FRAME_BOUNDS,
+                        ctypes.byref(extended), ctypes.sizeof(extended)
+                    )
+                    if hr == 0:  # S_OK
+                        # Calculate crop offsets relative to window rect
+                        # Add extra pixels to trim DWM shadow/border artifacts
+                        extra = 4
+                        crop_left = (extended.left - rect.left) + extra
+                        crop_top = extended.top - rect.top
+                        crop_right = width - (rect.right - extended.right) - extra
+                        crop_bottom = height - (rect.bottom - extended.bottom) - extra
+                        if (crop_left > 0 or crop_top > 0
+                                or crop_right < width or crop_bottom < height):
+                            img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
+                except Exception:
+                    pass  # If DWM query fails, return uncropped
+
+                # Handle DPI-unaware windows on high-DPI monitors.
+                # PrintWindow renders at the window's internal DPI, but
+                # GetWindowRect returns physical pixels, leaving black areas.
+                # Detect and crop to actual content size.
+                try:
+                    GetDpiForWindow = ctypes.windll.user32.GetDpiForWindow
+                    GetDpiForWindow.restype = ctypes.c_uint
+                    window_dpi = GetDpiForWindow(hwnd)
+                    if window_dpi and window_dpi < 144:
+                        # Check monitor DPI
+                        from ctypes import wintypes
+                        monitor = ctypes.windll.user32.MonitorFromWindow(
+                            hwnd, 2)  # MONITOR_DEFAULTTONEAREST
+                        if monitor:
+                            dpi_x = ctypes.c_uint()
+                            dpi_y = ctypes.c_uint()
+                            hr2 = ctypes.windll.shcore.GetDpiForMonitor(
+                                monitor, 0,  # MDT_EFFECTIVE_DPI
+                                ctypes.byref(dpi_x), ctypes.byref(dpi_y))
+                            if hr2 == 0 and dpi_x.value > window_dpi:
+                                # Window is DPI-unaware, crop to internal size
+                                scale = window_dpi / dpi_x.value
+                                iw, ih = img.size
+                                new_w = int(iw * scale)
+                                new_h = int(ih * scale)
+                                if new_w < iw or new_h < ih:
+                                    img = img.crop((0, 0, new_w, new_h))
+                except Exception:
+                    pass
+
+                # Fill any remaining near-black edge pixels with the
+                # window background color (handles DWM shadow remnants).
+                from PIL import ImageChops
+                iw, ih = img.size
+                bg_color = img.getpixel((iw // 2, ih // 2))
+                if all(c <= 30 for c in bg_color[:3]):
+                    bg_color = (240, 240, 240)
+                r_ch, g_ch, b_ch = img.split()
+                dark_limit = 30
+                r_mask = r_ch.point(lambda p: 255 if p <= dark_limit else 0)
+                g_mask = g_ch.point(lambda p: 255 if p <= dark_limit else 0)
+                b_mask = b_ch.point(lambda p: 255 if p <= dark_limit else 0)
+                dark_mask = ImageChops.multiply(
+                    ImageChops.multiply(r_mask, g_mask), b_mask)
+                bg_img = Image.new(img.mode, img.size, bg_color)
+                img = Image.composite(bg_img, img, dark_mask)
+
+                return img
 
             finally:
                 ctypes.windll.gdi32.DeleteObject(bitmap)
