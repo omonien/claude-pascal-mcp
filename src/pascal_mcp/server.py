@@ -45,6 +45,11 @@ from pascal_mcp.adb import (
     tap,
     type_text,
 )
+from pascal_mcp.win_interact import (
+    click_window,
+    type_in_window,
+    send_key_to_window,
+)
 from pascal_mcp.ide_observer import (
     capture_ide_screenshot,
     find_ide_window,
@@ -67,7 +72,10 @@ mcp = FastMCP(
         "to capture the device screen. Use adb_tap, adb_swipe, adb_type_text, "
         "and adb_key for UI automation. Use adb_install, adb_launch_app, "
         "adb_stop_app for app management. Use adb_push and adb_pull for "
-        "file transfer. All ADB tools accept an optional device serial."
+        "file transfer. All ADB tools accept an optional device serial. "
+        "Use app_click to click on Windows application windows using "
+        "screenshot pixel coordinates. Use app_type to type text and "
+        "app_key to send keys or shortcuts (e.g., ctrl+a, enter) to apps."
     ),
 )
 
@@ -633,6 +641,74 @@ async def list_project_files(
         parts.append("No Pascal source files found in this directory.")
 
     return "\n".join(parts)
+
+
+# --- Windows App Interaction Tools ---
+
+
+@mcp.tool()
+async def app_click(
+    window_title: str,
+    x: int,
+    y: int,
+    button: str = "left",
+    double_click: bool = False,
+) -> str:
+    """Click on a Windows application window at the given coordinates.
+
+    Coordinates use screenshot pixels — take a screenshot_app first to
+    identify where to click, then use those pixel coordinates here.
+
+    Uses PostMessage with automatic child window targeting so clicks
+    reach the correct control (buttons, edits, etc.).
+
+    Args:
+        window_title: Full or partial window title (case-insensitive).
+        x: X coordinate in screenshot pixels.
+        y: Y coordinate in screenshot pixels.
+        button: 'left' (default) or 'right'.
+        double_click: If True, send a double-click.
+    """
+    try:
+        return click_window(window_title, x, y, button=button, double=double_click)
+    except RuntimeError as e:
+        return str(e)
+
+
+@mcp.tool()
+async def app_type(window_title: str, text: str) -> str:
+    """Type text into a Windows application window.
+
+    Sends Unicode characters to the window's currently focused control.
+    Click on a text field first with app_click to focus it.
+
+    Args:
+        window_title: Full or partial window title (case-insensitive).
+        text: The text to type.
+    """
+    try:
+        return type_in_window(window_title, text)
+    except RuntimeError as e:
+        return str(e)
+
+
+@mcp.tool()
+async def app_key(window_title: str, key: str) -> str:
+    """Send a key or keyboard shortcut to a Windows application window.
+
+    Supports special keys: enter, tab, escape, backspace, delete, space,
+    up, down, left, right, home, end, pageup, pagedown, f1-f12.
+
+    Supports modifier combinations: ctrl+a, ctrl+shift+s, alt+f4, etc.
+
+    Args:
+        window_title: Full or partial window title (case-insensitive).
+        key: Key name or combination (e.g., 'enter', 'ctrl+a', 'f5').
+    """
+    try:
+        return send_key_to_window(window_title, key)
+    except RuntimeError as e:
+        return str(e)
 
 
 # --- ADB Tools ---

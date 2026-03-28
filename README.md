@@ -7,12 +7,14 @@ An MCP (Model Context Protocol) server that lets Claude compile, run, and intera
 - **Compiler Detection** — automatically finds Pascal compilers on your system (PATH + known install locations)
 - **Compile** — compile single-file Pascal source or multi-file Delphi projects
 - **Run** — compile and execute console programs, capturing output
-- **Launch GUI Apps** — compile and launch VCL/FMX applications in background
+- **Launch GUI Apps** — compile and launch VCL/FMX applications in background (without stealing focus)
 - **Project Templates** — generate proper Delphi project structure (DPR + PAS + DFM) automatically
 - **Form Parser** — read and understand DFM/FMX/LFM form files
 - **Window Screenshots** — capture running desktop app windows (non-intrusive, no focus stealing)
+- **Windows App Interaction** — click, type text, and send keyboard shortcuts to desktop app windows
+- **Android Device Interaction** — full ADB support: screenshots, tap, swipe, type, key events, app management, file transfer
+- **IDE Observer** — capture RAD Studio/Delphi/Lazarus IDE screenshots and read compiler errors
 - **Preview Bridge** — live preview of running Pascal apps through Claude's preview system
-- **Control Interaction** — click buttons, type text, send keys, move/resize windows
 - **FPC Installer** — download and install Free Pascal if no compiler is available
 
 ## Tools
@@ -28,6 +30,25 @@ An MCP (Model Context Protocol) server that lets Claude compile, run, and intera
 | `parse_form` | Parse DFM/FMX/LFM form files |
 | `screenshot_app` | Capture screenshot of a running app window |
 | `list_app_windows` | List visible windows on the desktop |
+| `app_click` | Click on a Windows app window at screenshot pixel coordinates |
+| `app_type` | Type text into a Windows app window |
+| `app_key` | Send key or shortcut (e.g., `ctrl+a`, `enter`) to a Windows app |
+| `observe_ide` | Capture IDE screenshot and scan project files |
+| `read_ide_errors` | Read source code around compiler error locations |
+| `list_project_files` | List source files in a Delphi/Lazarus project |
+| `adb_devices` | List connected Android devices with model and version |
+| `adb_device_info` | Get detailed info for a specific Android device |
+| `adb_screenshot` | Capture Android device screen |
+| `adb_tap` | Tap a point on the Android device screen |
+| `adb_swipe` | Swipe on the Android device screen |
+| `adb_type_text` | Type text on the Android device |
+| `adb_key` | Send a key event (home, back, enter, etc.) to Android device |
+| `adb_install` | Install an APK on the Android device |
+| `adb_list_packages` | List installed packages on the Android device |
+| `adb_launch_app` | Launch an app on the Android device |
+| `adb_stop_app` | Force-stop an app on the Android device |
+| `adb_push` | Push a file to the Android device |
+| `adb_pull` | Pull a file from the Android device |
 | `setup_fpc` | Download and install Free Pascal (fallback) |
 
 ## Preview Bridge
@@ -79,6 +100,44 @@ The click endpoint supports three modes, from most to least reliable:
 2. **Client-area coordinates** (`{"x": 200, "y": 142, "client": true}`) — uses Win32 `ClientToScreen` for proper DPI handling.
 3. **Window-relative coordinates** (`{"x": 312, "y": 261}`) — raw coordinates in the screenshot image space.
 
+## Windows App Interaction
+
+The `app_click`, `app_type`, and `app_key` tools let Claude interact with running Windows desktop applications.
+
+### Workflow
+
+1. Take a screenshot with `screenshot_app` to see the current UI
+2. Identify pixel coordinates of the target element (button, text field, etc.)
+3. Use `app_click` with those coordinates to click
+4. Use `app_type` to enter text into a focused field
+5. Use `app_key` to send keyboard shortcuts (`enter`, `ctrl+a`, `alt+f4`, etc.)
+
+Clicks use PostMessage with automatic child window targeting, so they reach the correct control. Typing and key events use SendInput for full Unicode and modifier support.
+
+## Android Device Interaction (ADB)
+
+Full Android device interaction via ADB. All tools accept an optional `device` serial number — auto-selects when only one device is connected.
+
+### Device Management
+- `adb_devices` — list connected devices with model, Android version, screen size
+- `adb_device_info` — detailed info for a specific device
+
+### Screenshots and UI Automation
+- `adb_screenshot` — capture the device screen
+- `adb_tap` / `adb_swipe` — touch interaction at pixel coordinates
+- `adb_type_text` — type text (auto-escapes for adb shell)
+- `adb_key` — send key events with aliases: `home`, `back`, `enter`, `menu`, `power`, `volume_up`, `volume_down`, `tab`, `delete`, `space`, `escape`, `app_switch`
+
+### App Management
+- `adb_install` — install APK files
+- `adb_list_packages` — list installed packages (with optional filter)
+- `adb_launch_app` — launch an app by package name
+- `adb_stop_app` — force-stop an app
+
+### File Transfer
+- `adb_push` — push files from PC to device
+- `adb_pull` — pull files from device to PC
+
 ## Project Templates
 
 The `compile_delphi_project` tool generates proper Delphi project structure automatically. You specify components and events, and it creates the correct DPR, PAS, and DFM files.
@@ -120,8 +179,8 @@ This generates:
 
 ```bash
 # Clone the repository
-git clone https://github.com/tina4stack/tina4delphi.git
-cd tina4delphi/claude-pascal-mcp
+git clone https://github.com/tina4stack/claude-pascal-mcp.git
+cd claude-pascal-mcp
 
 # Install dependencies
 uv sync
