@@ -618,10 +618,32 @@ def compile_and_launch(
         )
 
     try:
+        # Launch without stealing focus from the user.
+        # DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP keeps the app
+        # from inheriting our console and avoids window activation.
+        if sys.platform == "win32":
+            import ctypes
+            import ctypes.wintypes
+
+            si = subprocess.STARTUPINFO()
+            # STARTF_USESHOWWINDOW lets us control the initial window state
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            # SW_SHOWNOACTIVATE = 4: show the window but don't give it focus
+            si.wShowWindow = 4  # SW_SHOWNOACTIVATE
+
+            creation_flags = (
+                subprocess.CREATE_NEW_PROCESS_GROUP
+                | subprocess.DETACHED_PROCESS
+            )
+        else:
+            si = None
+            creation_flags = 0
+
         proc = subprocess.Popen(
             [compile_result.exe_path],
             cwd=os.path.dirname(compile_result.exe_path),
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
+            creationflags=creation_flags,
+            startupinfo=si,
         )
 
         # Brief pause to let the window appear

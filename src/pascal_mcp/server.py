@@ -30,6 +30,21 @@ from pascal_mcp.form_parser import (
 )
 from pascal_mcp.installer import download_and_install_fpc
 from pascal_mcp.screenshot import capture_window, list_windows
+from pascal_mcp.adb import (
+    capture_device_screen,
+    get_device_info,
+    install_apk,
+    key_event,
+    launch_app,
+    list_devices,
+    list_packages,
+    pull_file,
+    push_file,
+    stop_app,
+    swipe,
+    tap,
+    type_text,
+)
 from pascal_mcp.ide_observer import (
     capture_ide_screenshot,
     find_ide_window,
@@ -47,7 +62,12 @@ mcp = FastMCP(
         "projects (DPR + PAS + DFM). Use run_pascal to compile and execute "
         "console programs. Use launch_app for GUI applications that need to "
         "stay running. If no compiler is found, use setup_fpc to install "
-        "Free Pascal. Use parse_form to read DFM/FMX/LFM form files."
+        "Free Pascal. Use parse_form to read DFM/FMX/LFM form files. "
+        "Use adb_devices to list connected Android devices. Use adb_screenshot "
+        "to capture the device screen. Use adb_tap, adb_swipe, adb_type_text, "
+        "and adb_key for UI automation. Use adb_install, adb_launch_app, "
+        "adb_stop_app for app management. Use adb_push and adb_pull for "
+        "file transfer. All ADB tools accept an optional device serial."
     ),
 )
 
@@ -232,8 +252,9 @@ async def screenshot_app(
 ) -> list:
     """Take a screenshot of a running application window.
 
-    Finds a window by its title (or partial title), brings it to the
-    foreground, and captures just that window as a PNG image.
+    Finds a window by its title (or partial title) and captures just
+    that window as a PNG image without stealing focus or disrupting
+    the user's desktop.
     Use list_app_windows first if you need to find the exact title.
 
     Args:
@@ -612,6 +633,280 @@ async def list_project_files(
         parts.append("No Pascal source files found in this directory.")
 
     return "\n".join(parts)
+
+
+# --- ADB Tools ---
+
+
+@mcp.tool()
+async def adb_devices() -> str:
+    """List all connected Android devices with model, Android version, and screen size.
+
+    Returns a formatted table of connected devices. Use this to find
+    device serial numbers for targeting specific devices.
+    """
+    try:
+        devices = list_devices()
+    except RuntimeError as e:
+        return str(e)
+
+    if not devices:
+        return "No ADB devices found."
+
+    lines = [f"Found {len(devices)} device(s):\n"]
+    for d in devices:
+        lines.append(f"  [{d.serial}] {d.model or 'unknown'}")
+        lines.append(f"    State: {d.state}")
+        if d.android_version:
+            lines.append(f"    Android: {d.android_version}")
+        if d.screen_size:
+            lines.append(f"    Screen: {d.screen_size}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def adb_device_info(device: str | None = None) -> str:
+    """Get detailed information about a connected Android device.
+
+    Args:
+        device: Device serial number. If omitted, auto-selects when
+            only one device is connected.
+    """
+    try:
+        d = get_device_info(device)
+    except RuntimeError as e:
+        return str(e)
+
+    lines = [
+        f"Device: {d.serial}",
+        f"Model: {d.model or 'unknown'}",
+        f"Android: {d.android_version or 'unknown'}",
+        f"Screen: {d.screen_size or 'unknown'}",
+    ]
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def adb_screenshot(device: str | None = None) -> list:
+    """Capture the Android device screen as a screenshot.
+
+    Returns the screen image for visual inspection. Use this to see
+    what's currently displayed on the device.
+
+    Args:
+        device: Device serial number. If omitted, auto-selects when
+            only one device is connected.
+    """
+    try:
+        png_data, width, height = capture_device_screen(device)
+    except RuntimeError as e:
+        return str(e)
+
+    return [
+        Image(data=png_data, format="png"),
+        f"Device screenshot ({width}x{height})",
+    ]
+
+
+@mcp.tool()
+async def adb_tap(x: int, y: int, device: str | None = None) -> str:
+    """Tap a point on the Android device screen.
+
+    Args:
+        x: X coordinate in pixels.
+        y: Y coordinate in pixels.
+        device: Device serial number. If omitted, auto-selects when
+            only one device is connected.
+    """
+    try:
+        return tap(x, y, device=device)
+    except RuntimeError as e:
+        return str(e)
+
+
+@mcp.tool()
+async def adb_swipe(
+    x1: int, y1: int, x2: int, y2: int,
+    duration_ms: int = 300,
+    device: str | None = None,
+) -> str:
+    """Swipe on the Android device screen from one point to another.
+
+    Args:
+        x1: Start X coordinate.
+        y1: Start Y coordinate.
+        x2: End X coordinate.
+        y2: End Y coordinate.
+        duration_ms: Swipe duration in milliseconds (default 300).
+        device: Device serial number. If omitted, auto-selects when
+            only one device is connected.
+    """
+    try:
+        return swipe(x1, y1, x2, y2, duration_ms=duration_ms, device=device)
+    except RuntimeError as e:
+        return str(e)
+
+
+@mcp.tool()
+async def adb_type_text(text: str, device: str | None = None) -> str:
+    """Type text on the Android device.
+
+    The text is escaped for the adb shell. Spaces and special characters
+    are handled automatically. The device must have a text field focused.
+
+    Args:
+        text: The text to type.
+        device: Device serial number. If omitted, auto-selects when
+            only one device is connected.
+    """
+    try:
+        return type_text(text, device=device)
+    except RuntimeError as e:
+        return str(e)
+
+
+@mcp.tool()
+async def adb_key(key: str, device: str | None = None) -> str:
+    """Send a key event to the Android device.
+
+    Accepts short aliases: home, back, enter, menu, power, volume_up,
+    volume_down, tab, delete, space, escape, dpad_up, dpad_down,
+    dpad_left, dpad_right, dpad_center, app_switch, camera.
+    Also accepts full KEYCODE_* names or numeric key codes.
+
+    Args:
+        key: Key name, alias, or numeric code.
+        device: Device serial number. If omitted, auto-selects when
+            only one device is connected.
+    """
+    try:
+        return key_event(key, device=device)
+    except RuntimeError as e:
+        return str(e)
+
+
+@mcp.tool()
+async def adb_install(apk_path: str, device: str | None = None) -> str:
+    """Install an APK file on the Android device.
+
+    Replaces the existing installation if present (-r flag).
+
+    Args:
+        apk_path: Absolute path to the .apk file on the local machine.
+        device: Device serial number. If omitted, auto-selects when
+            only one device is connected.
+    """
+    try:
+        return install_apk(apk_path, device=device)
+    except RuntimeError as e:
+        return str(e)
+
+
+@mcp.tool()
+async def adb_list_packages(
+    filter_text: str = "",
+    device: str | None = None,
+) -> str:
+    """List installed packages on the Android device.
+
+    Args:
+        filter_text: Optional text to filter package names (case-insensitive).
+        device: Device serial number. If omitted, auto-selects when
+            only one device is connected.
+    """
+    try:
+        packages = list_packages(filter_text=filter_text, device=device)
+    except RuntimeError as e:
+        return str(e)
+
+    if not packages:
+        if filter_text:
+            return f"No packages matching '{filter_text}'."
+        return "No packages found."
+
+    lines = [f"Found {len(packages)} package(s):\n"]
+    for pkg in packages:
+        lines.append(f"  {pkg}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def adb_launch_app(
+    package: str,
+    activity: str | None = None,
+    device: str | None = None,
+) -> str:
+    """Launch an app on the Android device.
+
+    If no activity is specified, launches the default launcher activity.
+
+    Args:
+        package: Package name (e.g., 'com.example.myapp').
+        activity: Optional activity name (e.g., '.MainActivity').
+        device: Device serial number. If omitted, auto-selects when
+            only one device is connected.
+    """
+    try:
+        return launch_app(package, activity=activity, device=device)
+    except RuntimeError as e:
+        return str(e)
+
+
+@mcp.tool()
+async def adb_stop_app(package: str, device: str | None = None) -> str:
+    """Force-stop an app on the Android device.
+
+    Args:
+        package: Package name (e.g., 'com.example.myapp').
+        device: Device serial number. If omitted, auto-selects when
+            only one device is connected.
+    """
+    try:
+        return stop_app(package, device=device)
+    except RuntimeError as e:
+        return str(e)
+
+
+@mcp.tool()
+async def adb_push(
+    local_path: str,
+    remote_path: str,
+    device: str | None = None,
+) -> str:
+    """Push a file from the local machine to the Android device.
+
+    Args:
+        local_path: Path to the file on the local machine.
+        remote_path: Destination path on the device (e.g., '/sdcard/file.txt').
+        device: Device serial number. If omitted, auto-selects when
+            only one device is connected.
+    """
+    try:
+        return push_file(local_path, remote_path, device=device)
+    except RuntimeError as e:
+        return str(e)
+
+
+@mcp.tool()
+async def adb_pull(
+    remote_path: str,
+    local_path: str,
+    device: str | None = None,
+) -> str:
+    """Pull a file from the Android device to the local machine.
+
+    Args:
+        remote_path: Path on the device (e.g., '/sdcard/file.txt').
+        local_path: Destination path on the local machine.
+        device: Device serial number. If omitted, auto-selects when
+            only one device is connected.
+    """
+    try:
+        return pull_file(remote_path, local_path, device=device)
+    except RuntimeError as e:
+        return str(e)
 
 
 def main():
